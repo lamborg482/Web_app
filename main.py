@@ -1,31 +1,25 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import psycopg2
+from sqlalchemy import create_engine, Column, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.future import select
 import uuid
 from datetime import datetime
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 
 app = FastAPI()
+DATABASE_URL = "postgresql://postgres:1639@localhost:6666/Web_note"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-def get_db_connection():
-    conn = psycopg2.connect(
-            host='localhost',
-            dbname='Web_note',
-            user='postgres',
-            password='1639',
-            port=6666
-        )
-    return conn
+class NoteDB(Base):
+    __tablename__ = 'notes'
+    id = Column(String, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    title = Column(String)
+    description = Column(String)
 
 class NoteCreate(BaseModel):
     title: str
@@ -37,53 +31,46 @@ class NoteDisplay(BaseModel):
     title: str
     description: str
     
-@app.post("/notes/", response_model=NoteCreate)
-def create_note(note: NoteCreate):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    note_id = str(uuid.uuid4())
-    create_at = str(datetime.utcnow().strftime('%Y-%m-%d'))
+def get_db():
+    db = SessionLocal()
     try:
-        cur.execute("INSERT INTO notes (id, created_at, title, description) VALUES (%s, %s, %s, %s)",
-                    (note_id, create_at, note.title, note.description))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        yield db
     finally:
-        cur.close()
-        conn.close()
-    return note
+        db.close()
+    
+@app.post("/notes/", response_model=NoteCreate)
+async def create_note(note: NoteCreate, db: Session = Depends(get_db)):
+    note_id = str(uuid.uuid4())
+    db_note = NoteDB(id=note_id, title=note.title, description=note.description)
+    db.add(db_note)
+    db.commit()
+    db.refresh(db_note)
+    return NoteDisplay(id=db_note.id, created_at=db_note.created_at, title=db_note.title, description=db_note.description)
 
     
-@app.get("/notes/", response_model=List[NoteDisplay])
-def get_notes():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, created_at, title, description FROM notes ")
-    rows = cur.fetchall()
-    notes = [NoteDisplay(id=row[0], created_at=row[1] if row[1] is not None else datetime.now(), title=row[2], description=row[3]) for row in rows]
-    return notes
+@app.get("/notes/", response_model=list[NoteDisplay])
+async def get_notes(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    result = await db.execute(select(NoteDB).offset(skip).limit(limit))
+    notes = result.scalars().all()
+    return [NoteDisplay(id=note.id, created_at=note.created_at, title=note.title, description=note.description) for note in notes]
 
 @app.put("/notes/{note_id}", response_model=NoteCreate)
-def update_note(note_id: str, note: NoteCreate):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE notes SET title = %s, description = %s WHERE id = %s",
-                (note.title, note.description, note_id))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return note
-
+async def update_note(note_id: str, note: NoteCreate, db: Session = Depends(get_db)):
+    db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    db_note.title = note.title
+    db_note.description = note.description
+    db.commit()
+    return NoteDisplay(id=db_note.id, created_at=db_note.created_at, title=db_note.title, description=db_note.description)
+    
+    
+    
 @app.delete("/notes/{note_id}")
-def delete_note(note_id: str):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM notes WHERE id = %s",
-                (note_id,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return JSONResponse(content={"message": "Note deleted successfully"},
-                        status_code=204)
+async def delete_note(note_id: str, db: Session = Depends(get_db)):
+    db_note = db.query(NoteDB).filter(NoteDB.id == note_id).first()
+    if not db_note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    db.delete(db_note)
+    db.commit()
+    return JSONResponse(content={"message": "Note deleted successfully"}, status_code=204)
