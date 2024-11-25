@@ -1,43 +1,30 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 import uuid
 from datetime import datetime
+from fastapi import FastAPI, Depends, HTTPException
+from db_connect import get_db
+from model.models_note import NoteDB
+from model.models_display import NoteDisplay
+from model.models_create import NoteCreate
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 
 app = FastAPI()
-DATABASE_URL = "postgresql://postgres:1639@localhost:6666/Web_note"
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
-class NoteDB(Base):
-    __tablename__ = 'notes'
-    id = Column(String, primary_key=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    title = Column(String)
-    description = Column(String)
+origins = ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class NoteCreate(BaseModel):
-    title: str
-    description: str
-
-class NoteDisplay(BaseModel):
-    id: str
-    created_at: str
-    title: str
-    description: str
-    
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-    
 @app.post("/notes/", response_model=NoteCreate)
 async def create_note(note: NoteCreate, db: Session = Depends(get_db)):
     note_id = str(uuid.uuid4())
@@ -48,11 +35,13 @@ async def create_note(note: NoteCreate, db: Session = Depends(get_db)):
     return NoteDisplay(id=db_note.id, created_at=db_note.created_at, title=db_note.title, description=db_note.description)
 
     
+
 @app.get("/notes/", response_model=list[NoteDisplay])
-async def get_notes(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+async def getnotes(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(NoteDB).offset(skip).limit(limit))
     notes = result.scalars().all()
     return [NoteDisplay(id=note.id, created_at=note.created_at, title=note.title, description=note.description) for note in notes]
+
 
 @app.put("/notes/{note_id}", response_model=NoteCreate)
 async def update_note(note_id: str, note: NoteCreate, db: Session = Depends(get_db)):
