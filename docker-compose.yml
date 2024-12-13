@@ -1,0 +1,42 @@
+version: '3.8'
+services:
+  web:
+    image: myfastapiapp
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - minio
+      - nginx
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:1639@db:5432/Web_note
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 1639
+      POSTGRES_DB: Web_note
+    ports:
+      - "6666:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+    command: server /data
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+
+volumes:
+  postgres_data:
