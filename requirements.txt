@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+SQLAlchemy
+pydantic
+minio
+python-dotenv
+asyncpg
+python-multipart
